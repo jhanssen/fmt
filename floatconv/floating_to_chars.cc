@@ -65,6 +65,15 @@
 
 using namespace std;
 
+namespace floatconv {
+template<typename T>
+constexpr T bitwidth(T x) noexcept
+{
+    constexpr auto Nd = numeric_limits<T>::digits;
+    return Nd - std::countl_zero<T>(x);
+}
+}
+
 namespace
 {
   namespace ryu
@@ -495,7 +504,7 @@ namespace
 
       constexpr auto& pow10_adjustment_tab
         = floating_type_traits<T>::pow10_adjustment_tab;
-      __glibcxx_assert(fd.exponent/64 < (int)std::size(pow10_adjustment_tab));
+      assert(fd.exponent/64 < (int)std::size(pow10_adjustment_tab));
       return (pow10_adjustment_tab[fd.exponent/64]
               & (1ull << (63 - fd.exponent%64)));
     }
@@ -524,7 +533,7 @@ namespace floatconv
     __handle_special_value(char* first, char* const last, const T value,
                            const chars_format fmt, const int precision)
     {
-      __glibcxx_assert(precision >= 0);
+      assert(precision >= 0);
 
       string_view str;
       switch (__builtin_fpclassify(FP_NAN, FP_INFINITE, FP_NORMAL, FP_SUBNORMAL,
@@ -562,7 +571,7 @@ namespace floatconv
         }
 
       // We're formatting 0.
-      __glibcxx_assert(value == 0);
+      assert(value == 0);
       const bool sign = __builtin_signbit(value);
       int expected_output_length;
       const char* orig_first = first;
@@ -613,7 +622,7 @@ namespace floatconv
           *first++ = '0';
           break;
         }
-      __glibcxx_assert(first - orig_first == expected_output_length);
+      assert(first - orig_first == expected_output_length);
       return {{first, errc{}}};
     }
 
@@ -662,7 +671,7 @@ namespace floatconv
             effective_mantissa |= mantissa_t{1} << rounded_mantissa_bits;
           else
             // The explicit mantissa bit should already be set.
-            __glibcxx_assert(effective_mantissa & (mantissa_t{1} << (mantissa_bits
+            assert(effective_mantissa & (mantissa_t{1} << (mantissa_bits
                                                                      - 1u)));
         }
 
@@ -676,7 +685,7 @@ namespace floatconv
                                           : (mantissa_bits - 4 + 3) / 4);
       const int trailing_zeros = __countr_zero(effective_mantissa) / 4;
       const int shortest_full_precision = full_hex_precision - trailing_zeros;
-      __glibcxx_assert(shortest_full_precision >= 0);
+      assert(shortest_full_precision >= 0);
 
       int written_exponent = unbiased_exponent;
       const int effective_precision = precision.value_or(shortest_full_precision);
@@ -732,14 +741,14 @@ namespace floatconv
       if constexpr (has_implicit_leading_bit)
         {
           const unsigned nibble = effective_mantissa >> rounded_mantissa_bits;
-          __glibcxx_assert(nibble <= 2);
+          assert(nibble <= 2);
           leading_hexit = '0' + nibble;
           effective_mantissa &= ~(mantissa_t{0b11} << rounded_mantissa_bits);
         }
       else
         {
           const unsigned nibble = effective_mantissa >> (rounded_mantissa_bits-4);
-          __glibcxx_assert(nibble < 16);
+          assert(nibble < 16);
           leading_hexit = "0123456789abcdef"[nibble];
           effective_mantissa &= ~(mantissa_t{0b1111} << (rounded_mantissa_bits-4));
           written_exponent -= 3;
@@ -780,13 +789,13 @@ namespace floatconv
             {
               nibble_offset -= 4;
               const unsigned nibble = effective_mantissa >> nibble_offset;
-              __glibcxx_assert(nibble < 16);
+              assert(nibble < 16);
               *first++ = "0123456789abcdef"[nibble];
               ++written_hexits;
                effective_mantissa &= ~(mantissa_t{0b1111} << nibble_offset);
             }
-          __glibcxx_assert(nibble_offset >= 0);
-          __glibcxx_assert(written_hexits <= effective_precision);
+          assert(nibble_offset >= 0);
+          assert(written_hexits <= effective_precision);
           // Since the mantissa is now empty, every hexit hereafter must be '0'.
           if (int remaining_hexits = effective_precision - written_hexits)
             {
@@ -800,7 +809,7 @@ namespace floatconv
       if (written_exponent >= 0)
         *first++ = '+';
       const std::to_chars_result result = to_chars(first, last, written_exponent);
-      __glibcxx_assert(result.ec == errc{}
+      assert(result.ec == errc{}
                        && result.ptr == saved_first + expected_output_length);
       return result;
     }
@@ -813,7 +822,7 @@ namespace floatconv
       if (fmt == chars_format::hex)
         return __floating_to_chars_hex(first, last, value, nullopt);
 
-      __glibcxx_assert(fmt == chars_format::fixed
+      assert(fmt == chars_format::fixed
                        || fmt == chars_format::scientific
                        || fmt == chars_format::general
                        || fmt == chars_format{});
@@ -869,7 +878,7 @@ namespace floatconv
             return {last, errc::value_too_large};
 
           const int output_length = ryu::to_chars(fd, first);
-          __glibcxx_assert(output_length == expected_output_length);
+          assert(output_length == expected_output_length);
           return {first + output_length, errc{}};
         }
       else if (fmt == chars_format::fixed && fd.exponent >= 0)
@@ -909,7 +918,7 @@ namespace floatconv
           //
           // After adding some wiggle room due to rounding we get the condition
           // value_fits_inside_mantissa_p below.
-          const int log2_mantissa = __bit_width(fd.mantissa) - 1;
+          const int log2_mantissa = floatconv::bitwidth(fd.mantissa) - 1;
           const bool value_fits_inside_mantissa_p
             = (log2_mantissa + (fd.exponent*10 + 2) / 3
                < floating_type_traits<T>::mantissa_bits - 2);
@@ -920,11 +929,11 @@ namespace floatconv
               if (fd.sign)
                 *first++ = '-';
               std::to_chars_result result = to_chars(first, last, fd.mantissa);
-              __glibcxx_assert(result.ec == errc{});
+              assert(result.ec == errc{});
               memset(result.ptr, '0', fd.exponent);
               result.ptr += fd.exponent;
               const int output_length = fd.sign + (result.ptr - first);
-              __glibcxx_assert(output_length == expected_output_length);
+              assert(output_length == expected_output_length);
               return result;
             }
           else if constexpr (is_same_v<T, long double>)
@@ -943,7 +952,7 @@ namespace floatconv
               const int output_length = sprintf(buffer, "%.0Lf", value);
               if (saved_rounding_mode != FE_TONEAREST)
                 fesetround(saved_rounding_mode);
-              __glibcxx_assert(output_length == expected_output_length);
+              assert(output_length == expected_output_length);
               memcpy(first, buffer, output_length);
               return {first + output_length, errc{}};
             }
@@ -951,7 +960,7 @@ namespace floatconv
             {
               // Otherwise, the number is too big, so defer to d2fixed_buffered_n.
               const int output_length = ryu::d2fixed_buffered_n(value, 0, first);
-              __glibcxx_assert(output_length == expected_output_length);
+              assert(output_length == expected_output_length);
               return {first + output_length, errc{}};
             }
         }
@@ -981,7 +990,7 @@ namespace floatconv
               first += leading_zeros;
               const std::to_chars_result result = to_chars(first, last, fd.mantissa);
               const int output_length = result.ptr - orig_first;
-              __glibcxx_assert(output_length == expected_output_length
+              assert(output_length == expected_output_length
                                && result.ec == errc{});
               return result;
             }
@@ -992,19 +1001,19 @@ namespace floatconv
               if (fd.sign)
                 *first++ = '-';
               std::to_chars_result result = to_chars(first, last, fd.mantissa);
-              __glibcxx_assert(result.ec == errc{});
+              assert(result.ec == errc{});
               // Make space for and write the decimal point in the correct spot.
               memmove(&result.ptr[fd.exponent+1], &result.ptr[fd.exponent],
                       -fd.exponent);
               result.ptr[fd.exponent] = '.';
               const int output_length = result.ptr + 1 - orig_first;
-              __glibcxx_assert(output_length == expected_output_length);
+              assert(output_length == expected_output_length);
               ++result.ptr;
               return result;
             }
         }
 
-      __glibcxx_assert(false);
+      assert(false);
       __builtin_unreachable();
     }
 
@@ -1016,7 +1025,7 @@ namespace floatconv
       if (fmt == chars_format::hex)
         return __floating_to_chars_hex(first, last, value, precision);
 
-      __glibcxx_assert(fmt == chars_format::fixed
+      assert(fmt == chars_format::fixed
                        || fmt == chars_format::scientific
                        || fmt == chars_format::general);
 
@@ -1064,13 +1073,13 @@ namespace floatconv
         = (floor_log2_value >= 0
            ? max(mantissa_bits + 1, approx_log10_value + 1)
            : -(7*floor_log2_value + 9)/10 + 2 + mantissa_bits + 1);
-      __glibcxx_assert(max_eff_scientific_precision > 0);
+      assert(max_eff_scientific_precision > 0);
 
       const int max_eff_fixed_precision
         = (floor_log2_value >= 0
            ? mantissa_bits + 1
            : -floor_log2_value + mantissa_bits + 1);
-      __glibcxx_assert(max_eff_fixed_precision > 0);
+      assert(max_eff_fixed_precision > 0);
 
       // Ryu doesn't support formatting floating-point types larger than double
       // with an explicit precision, so instead we just go through printf.
@@ -1106,7 +1115,7 @@ namespace floatconv
                 strncpy(radix, radix_ptr, sizeof(radix)-1);
                 // We accept only radix points which are at most 4 bytes (one
                 // UTF-8 character) wide.
-                __glibcxx_assert(radix[4] == '\0');
+                assert(radix[4] == '\0');
               }
 
           // Compute straightforward upper bounds on the output length.
@@ -1133,7 +1142,7 @@ namespace floatconv
             = sprintf(buffer, output_specifier, effective_precision, value);
           if (saved_rounding_mode != FE_TONEAREST)
             fesetround(saved_rounding_mode);
-          __glibcxx_assert(output_length <= output_length_upper_bound);
+          assert(output_length <= output_length_upper_bound);
 
           if (effective_precision > 0)
             // We need to replace a radix that is different from '.' with '.'.
@@ -1169,7 +1178,7 @@ namespace floatconv
                     = (output_length >= 6 && first[-6] == 'e' ? &first[-6]
                        : first[-5] == 'e' ? &first[-5]
                        : &first[-4]);
-                  __glibcxx_assert(*significand_end == 'e');
+                  assert(*significand_end == 'e');
                     memmove(significand_end + excess_precision, significand_end,
                             first - significand_end);
                     memset(significand_end, '0', excess_precision);
@@ -1215,7 +1224,7 @@ namespace floatconv
               // write directly into it.
               output_length = ryu::d2exp_buffered_n(value, effective_precision,
                                                     first, nullptr);
-              __glibcxx_assert(output_length == output_length_upper_bound
+              assert(output_length == output_length_upper_bound
                                || (scientific_exponent_near_100_p
                                    && (output_length
                                        == output_length_upper_bound - 1)));
@@ -1228,7 +1237,7 @@ namespace floatconv
               char buffer[output_length_upper_bound];
               output_length = ryu::d2exp_buffered_n(value, effective_precision,
                                                     buffer, nullptr);
-              __glibcxx_assert(output_length == output_length_upper_bound - 1
+              assert(output_length == output_length_upper_bound - 1
                                || output_length == output_length_upper_bound);
               if (last - first < output_length + excess_precision)
                 return {last, errc::value_too_large};
@@ -1245,7 +1254,7 @@ namespace floatconv
               // Splice the excess zeros into the result.
               char* const significand_end = (first[-5] == 'e'
                                              ? &first[-5] : &first[-4]);
-              __glibcxx_assert(*significand_end == 'e');
+              assert(*significand_end == 'e');
               memmove(significand_end + excess_precision, significand_end,
                       first - significand_end);
               memset(significand_end, '0', excess_precision);
@@ -1276,7 +1285,7 @@ namespace floatconv
               // write directly into it.
               output_length = ryu::d2fixed_buffered_n(value, effective_precision,
                                                       first);
-              __glibcxx_assert(output_length <= output_length_upper_bound);
+              assert(output_length <= output_length_upper_bound);
             }
           else
             {
@@ -1286,7 +1295,7 @@ namespace floatconv
               char buffer[output_length_upper_bound];
               output_length = ryu::d2fixed_buffered_n(value, effective_precision,
                                                       buffer);
-              __glibcxx_assert(output_length <= output_length_upper_bound);
+              assert(output_length <= output_length_upper_bound);
               if (last - first < output_length + excess_precision)
                 return {last, errc::value_too_large};
               memcpy(first, buffer, output_length);
@@ -1326,7 +1335,7 @@ namespace floatconv
           int output_length
             = ryu::d2exp_buffered_n(value, effective_precision - 1,
                                     buffer_start, &scientific_exponent);
-          __glibcxx_assert(output_length <= output_length_upper_bound);
+          assert(output_length <= output_length_upper_bound);
 
           // 7.21.6.1/8: "Then, if a conversion with style E would have an
           // exponent of X:
@@ -1352,7 +1361,7 @@ namespace floatconv
                   leading_digit[1] = leading_digit[0];
                   // buffer_start == "-11234e-04"
                   buffer_start -= -scientific_exponent;
-                  __glibcxx_assert(buffer_start >= buffer);
+                  assert(buffer_start >= buffer);
                   // buffer_start == "????-11234e-04"
                   char* head = buffer_start;
                   if (sign)
@@ -1376,7 +1385,7 @@ namespace floatconv
                   // The scientific exponent must be 0, so the fixed form
                   // coincides with the scientific form (minus the exponent
                   // suffix).
-                  __glibcxx_assert(scientific_exponent == 0);
+                  assert(scientific_exponent == 0);
                   output_length -= strlen("e+dd");
                 }
               else
@@ -1384,81 +1393,81 @@ namespace floatconv
                   // We are dealing with a scientific form which has a
                   // non-empty fractional part and a nonnegative exponent,
                   // e.g. buffer_start == "1.234e+02".
-                  __glibcxx_assert(effective_precision >= 1);
+                  assert(effective_precision >= 1);
                   char* const decimal_point = &buffer_start[sign + 1];
-                  __glibcxx_assert(*decimal_point == '.');
+                  assert(*decimal_point == '.');
                   memmove(decimal_point, decimal_point+1,
                           scientific_exponent);
                   // buffer_start == "123.4e+02"
-		  decimal_point[scientific_exponent] = '.';
-		  if (scientific_exponent >= 100)
-		    output_length -= strlen("e+ddd");
-		  else
-		    output_length -= strlen("e+dd");
-		  if (effective_precision - 1 == scientific_exponent)
-		    output_length -= strlen(".");
-		}
-	      effective_precision -= 1 + scientific_exponent;
+                  decimal_point[scientific_exponent] = '.';
+                  if (scientific_exponent >= 100)
+                    output_length -= strlen("e+ddd");
+                  else
+                    output_length -= strlen("e+dd");
+                  if (effective_precision - 1 == scientific_exponent)
+                    output_length -= strlen(".");
+                }
+              effective_precision -= 1 + scientific_exponent;
 
-	      __glibcxx_assert(output_length <= output_length_upper_bound);
-	    }
-	  else
-	    {
-	      // We're sticking to the scientific form, so keep the output as-is.
-	      fmt = chars_format::scientific;
-	      effective_precision = effective_precision - 1;
-	    }
+              assert(output_length <= output_length_upper_bound);
+            }
+          else
+            {
+              // We're sticking to the scientific form, so keep the output as-is.
+              fmt = chars_format::scientific;
+              effective_precision = effective_precision - 1;
+            }
 
-	  // 7.21.6.1/8: "Finally ... any any trailing zeros are removed from
-	  // the fractional portion of the result and the decimal-point
-	  // character is removed if there is no fractional portion remaining."
-	  if (effective_precision > 0)
-	    {
-	      char* decimal_point = nullptr;
-	      if (fmt == chars_format::scientific)
-		decimal_point = &buffer_start[sign + 1];
-	      else if (fmt == chars_format::fixed)
-		decimal_point
-		  = &buffer_start[output_length] - effective_precision - 1;
-	      __glibcxx_assert(*decimal_point == '.');
+          // 7.21.6.1/8: "Finally ... any any trailing zeros are removed from
+          // the fractional portion of the result and the decimal-point
+          // character is removed if there is no fractional portion remaining."
+          if (effective_precision > 0)
+            {
+              char* decimal_point = nullptr;
+              if (fmt == chars_format::scientific)
+                decimal_point = &buffer_start[sign + 1];
+              else if (fmt == chars_format::fixed)
+                decimal_point
+                  = &buffer_start[output_length] - effective_precision - 1;
+              assert(*decimal_point == '.');
 
-	      char* const fractional_part_start = decimal_point + 1;
-	      char* fractional_part_end = nullptr;
-	      if (fmt == chars_format::scientific)
-		{
-		  fractional_part_end = (buffer_start[output_length-5] == 'e'
-					 ? &buffer_start[output_length-5]
-					 : &buffer_start[output_length-4]);
-		  __glibcxx_assert(*fractional_part_end == 'e');
-		}
-	      else if (fmt == chars_format::fixed)
-		fractional_part_end = &buffer_start[output_length];
+              char* const fractional_part_start = decimal_point + 1;
+              char* fractional_part_end = nullptr;
+              if (fmt == chars_format::scientific)
+                {
+                  fractional_part_end = (buffer_start[output_length-5] == 'e'
+                                         ? &buffer_start[output_length-5]
+                                         : &buffer_start[output_length-4]);
+                  assert(*fractional_part_end == 'e');
+                }
+              else if (fmt == chars_format::fixed)
+                fractional_part_end = &buffer_start[output_length];
 
-	      const string_view fractional_part
-		= {fractional_part_start, (size_t)(fractional_part_end
-						   - fractional_part_start) };
-	      const size_t last_nonzero_digit_pos
-		= fractional_part.find_last_not_of('0');
+              const string_view fractional_part
+                = {fractional_part_start, (size_t)(fractional_part_end
+                                                   - fractional_part_start) };
+              const size_t last_nonzero_digit_pos
+                = fractional_part.find_last_not_of('0');
 
-	      char* trim_start;
-	      if (last_nonzero_digit_pos == string_view::npos)
-		trim_start = decimal_point;
-	      else
-		trim_start = &fractional_part_start[last_nonzero_digit_pos] + 1;
-	      if (fmt == chars_format::scientific)
-		memmove(trim_start, fractional_part_end,
-			&buffer_start[output_length] - fractional_part_end);
-	      output_length -= fractional_part_end - trim_start;
-	    }
+              char* trim_start;
+              if (last_nonzero_digit_pos == string_view::npos)
+                trim_start = decimal_point;
+              else
+                trim_start = &fractional_part_start[last_nonzero_digit_pos] + 1;
+              if (fmt == chars_format::scientific)
+                memmove(trim_start, fractional_part_end,
+                        &buffer_start[output_length] - fractional_part_end);
+              output_length -= fractional_part_end - trim_start;
+            }
 
-	  if (last - first < output_length)
-	    return {last, errc::value_too_large};
+          if (last - first < output_length)
+            return {last, errc::value_too_large};
 
-	  memcpy(first, buffer_start, output_length);
-	  return {first + output_length, errc{}};
-	}
+          memcpy(first, buffer_start, output_length);
+          return {first + output_length, errc{}};
+        }
 
-      __glibcxx_assert(false);
+      assert(false);
       __builtin_unreachable();
     }
 
