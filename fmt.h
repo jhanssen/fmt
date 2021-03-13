@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iterator>
 #include <string>
+#include <utility>
 #include <floatconv/floating_to_chars.h>
 
 namespace fmt {
@@ -21,6 +22,37 @@ struct StringLiteral
     }
 
     char value[N];
+};
+
+struct FormatArg
+{
+public:
+    enum class Type
+    {
+        None,
+        Binary,
+        Decimal,
+        Octal,
+        Hex,
+        Scientific,
+        Fixed,
+        General
+    };
+
+    constexpr FormatArg()
+        : position(-1), width(-1), precision(-1), type(Type::None)
+    {
+    }
+
+    constexpr FormatArg(int p, int w = 0, int pr = -1, Type t = Type::None)
+        : position(p), precision(pr), type(t)
+    {
+    }
+
+    int position;
+    int width;
+    int precision;
+    Type type;
 };
 
 struct Piece
@@ -136,10 +168,25 @@ inline std::string_view Piece::view() const
 }
 
 template<typename Arg>
-inline std::enable_if_t<std::is_floating_point_v<std::decay_t<Arg>>, Piece> makePiece(Arg argument)
+inline std::enable_if_t<std::is_floating_point_v<std::decay_t<Arg>>, Piece> makePiece(const FormatArg& fmt, Arg argument)
 {
     Piece piece;
-    auto ret = floatconv::to_chars(piece.buffer, piece.buffer + Piece::PieceLength, static_cast<double>(argument), std::chars_format::fixed, 6);
+    std::chars_format cfmt;
+    switch (fmt.type) {
+    case FormatArg::Type::Hex:
+        cfmt = std::chars_format::hex;
+        break;
+    case FormatArg::Type::Scientific:
+        cfmt = std::chars_format::scientific;
+        break;
+    case FormatArg::Type::General:
+        cfmt = std::chars_format::general;
+        break;
+    default:
+        cfmt = std::chars_format::fixed;
+        break;
+    }
+    auto ret = floatconv::to_chars(piece.buffer, piece.buffer + Piece::PieceLength, static_cast<double>(argument), cfmt, fmt.precision);
     if (ret.ec == std::errc {}) {
         piece.updateSize(ret.ptr - piece.buffer);
     }
@@ -147,7 +194,7 @@ inline std::enable_if_t<std::is_floating_point_v<std::decay_t<Arg>>, Piece> make
 }
 
 template<typename Arg>
-inline std::enable_if_t<std::is_integral_v<std::decay_t<Arg>>, Piece> makePiece(Arg argument)
+inline std::enable_if_t<std::is_integral_v<std::decay_t<Arg>>, Piece> makePiece(const FormatArg& fmt, Arg argument)
 {
     using DecayedArg = std::decay_t<Arg>;
     if constexpr (std::is_same_v<DecayedArg, bool>) {
@@ -174,15 +221,218 @@ inline std::enable_if_t<std::is_integral_v<std::decay_t<Arg>>, Piece> makePiece(
     }
 }
 
-inline Piece makePiece(std::string_view argument)
+inline Piece makePiece(const FormatArg& fmt, std::string_view argument)
 {
     return Piece(argument.data(), argument.size());
 }
 
 template<size_t N>
-inline Piece makePiece(const char (&argument)[N])
+inline Piece makePiece(const FormatArg& fmt, const char (&argument)[N])
 {
     return Piece(argument);
+}
+
+template<typename Formats, typename Tuple, uint32_t... Is>
+inline std::array<Piece, sizeof...(Is)> makePieces_internal(Formats& formats, std::integer_sequence<uint32_t, Is...>, Tuple& t)
+{
+    return {{ { makePiece(formats[Is], std::get<Is>(t)) }... }};
+}
+
+template<typename Formats, typename... Args>
+inline std::array<Piece, sizeof...(Args)> makePieces(Formats& formats, Args&&... args)
+{
+    auto data = std::make_tuple(std::forward<Args>(args)...);
+    return makePieces_internal(formats, std::make_integer_sequence<uint32_t, sizeof...(Args)>{}, data);
+}
+
+template<StringLiteral formatString, size_t NumArgs>
+consteval std::array<FormatArg, NumArgs> makeArgs()
+{
+    std::array<FormatArg, NumArgs> args;
+
+    enum ArgState {
+        Outside,
+        Position,
+        Width,
+        Precision,
+        Type
+    };
+    size_t inarg = 0;
+    size_t offset = 0;
+    size_t argno = 0;
+
+    auto parseInt = [](size_t begin, size_t end) -> int {
+        int v = 0, o = 1;
+        while (end > begin) {
+            if (formatString.value[end - 1] < '0' || formatString.value[end - 1] > '9')
+                return v;
+            v += (formatString.value[end - 1] - '0') * o;
+            o *= 10;
+            --end;
+        }
+        return v;
+    };
+
+    ArgState argState = Outside;
+
+    auto finalize = [&argState, &argno, &args, &parseInt](size_t begin, size_t end) {
+        switch (argState) {
+        case Position:
+            args[argno].position = parseInt(begin, end);
+            break;
+        case Width:
+            args[argno].width = parseInt(begin, end);
+            break;
+        case Precision:
+            args[argno].precision = parseInt(begin, end);
+            break;
+        default:
+            break;
+        }
+    };
+
+    for (size_t i = 0; i < formatString.Size; ++i)
+    {
+        switch (formatString.value[i]) {
+        case '{':
+            if (!inarg++) {
+                if (i + 1 < formatString.Size && formatString.value[i + 1] == '{') {
+                    --inarg;
+                    ++i;
+                } else {
+                    argState = Position;
+                    offset = i + 1;
+                }
+            }
+            break;
+        case ':':
+            if (argState != Outside) {
+                if (argState >= Width)
+                    throw "Only one ':' allowed";
+                args[argno].position = parseInt(offset, i);
+                argState = Width;
+                offset = i + 1;
+            }
+            break;
+        case '.':
+            if (argState != Outside) {
+                if (argState >= Precision)
+                    throw "Only one '.' allowed";
+                args[argno].width = parseInt(offset, i);
+                argState = Precision;
+                offset = i + 1;
+            }
+            break;
+        case 'b':
+            if (argState != Outside) {
+                finalize(offset, i);
+                if (argState >= Type)
+                    throw "Only one type allowed";
+                args[argno].type = FormatArg::Type::Binary;
+                argState = Type;
+                offset = i + 1;
+            }
+            break;
+        case 'd':
+            if (argState != Outside) {
+                finalize(offset, i);
+                if (argState >= Type)
+                    throw "Only one type allowed";
+                args[argno].type = FormatArg::Type::Decimal;
+                argState = Type;
+                offset = i + 1;
+            }
+            break;
+        case 'o':
+            if (argState != Outside) {
+                finalize(offset, i);
+                if (argState >= Type)
+                    throw "Only one type allowed";
+                args[argno].type = FormatArg::Type::Octal;
+                argState = Type;
+                offset = i + 1;
+            }
+            break;
+        case 'h':
+            [[fallthrough]];
+        case 'a':
+            if (argState != Outside) {
+                finalize(offset, i);
+                if (argState >= Type)
+                    throw "Only one type allowed";
+                args[argno].type = FormatArg::Type::Hex;
+                argState = Type;
+                offset = i + 1;
+            }
+            break;
+        case 'e':
+            if (argState != Outside) {
+                finalize(offset, i);
+                if (argState >= Type)
+                    throw "Only one type allowed";
+                args[argno].type = FormatArg::Type::Scientific;
+                argState = Type;
+                offset = i + 1;
+            }
+            break;
+        case 'f':
+            if (argState != Outside) {
+                finalize(offset, i);
+                if (argState >= Type)
+                    throw "Only one type allowed";
+                args[argno].type = FormatArg::Type::Fixed;
+                argState = Type;
+                offset = i + 1;
+            }
+            break;
+        case 'g':
+            if (argState != Outside) {
+                finalize(offset, i);
+                if (argState >= Type)
+                    throw "Only one type allowed";
+                args[argno].type = FormatArg::Type::General;
+                argState = Type;
+                offset = i + 1;
+            }
+            break;
+        case '}':
+            if (inarg > 0) {
+                if (!--inarg) {
+                    finalize(offset, i);
+                    argState = Outside;
+                    ++argno;
+                }
+            }
+        }
+    }
+
+    return args;
+}
+
+template<StringLiteral formatString>
+consteval size_t argumentCount()
+{
+    size_t cnt = 0;
+    size_t inarg = 0;
+    for (size_t i = 0; i < formatString.Size; ++i)
+    {
+        switch (formatString.value[i]) {
+        case '{':
+            if (!inarg++) {
+                if (i + 1 < formatString.Size && formatString.value[i + 1] == '{') {
+                    --inarg;
+                    ++i;
+                } else {
+                    ++cnt;
+                }
+            }
+            break;
+        case '}':
+            if (inarg > 0)
+                --inarg;
+        }
+    }
+    return cnt;
 }
 
 } // namespace detail
@@ -190,6 +440,12 @@ inline Piece makePiece(const char (&argument)[N])
 template<detail::StringLiteral lit, typename OutputIt, typename... Args>
 void format_to(OutputIt out, Args&&... args)
 {
+    static_assert(detail::argumentCount<lit>() == sizeof...(Args));
+    auto fmtargs = detail::makeArgs<lit, sizeof...(Args)>();
+    auto pieces = detail::makePieces(fmtargs, std::forward<Args>(args)...);
+    for (const auto& foo : pieces) {
+        printf("hello %s\n", std::string(foo.view()).c_str());
+    }
 }
 
 template<detail::StringLiteral lit, typename... Args>
