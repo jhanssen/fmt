@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
 project(fmt)
 include_directories(${CMAKE_CURRENT_LIST_DIR})
-add_executable(fmt main.cpp)
+add_executable(fmt main.cpp floatconv/floating_to_chars.cc)
 target_compile_features(fmt PUBLIC cxx_std_20)
