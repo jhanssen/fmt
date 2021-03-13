@@ -40,15 +40,17 @@ public:
     };
 
     constexpr FormatArg()
-        : position(-1), width(-1), precision(-1), type(Type::None)
+        : begin(-1), end(-1), position(-1), width(-1), precision(-1), type(Type::None)
     {
     }
 
-    constexpr FormatArg(int p, int w = 0, int pr = -1, Type t = Type::None)
-        : position(p), precision(pr), type(t)
+    constexpr FormatArg(int b, int e, int p, int w = 0, int pr = -1, Type t = Type::None)
+        : begin(b), end(e), position(p), precision(pr), type(t)
     {
     }
 
+    int begin;
+    int end;
     int position;
     int width;
     int precision;
@@ -246,7 +248,7 @@ inline std::array<Piece, sizeof...(Args)> makePieces(Formats& formats, Args&&...
 }
 
 template<StringLiteral formatString, size_t NumArgs>
-consteval std::array<FormatArg, NumArgs> makeArgs()
+consteval std::array<FormatArg, NumArgs> parseArgs()
 {
     std::array<FormatArg, NumArgs> args;
 
@@ -302,6 +304,7 @@ consteval std::array<FormatArg, NumArgs> makeArgs()
                 } else {
                     argState = Position;
                     offset = i + 1;
+                    args[argno].begin = i;
                 }
             }
             break;
@@ -400,6 +403,8 @@ consteval std::array<FormatArg, NumArgs> makeArgs()
                 if (!--inarg) {
                     finalize(offset, i);
                     argState = Outside;
+                    args[argno].end = i + 1;
+                    offset = i + 1;
                     ++argno;
                 }
             }
@@ -435,21 +440,73 @@ consteval size_t argumentCount()
     return cnt;
 }
 
+template<typename OutputIt, size_t N>
+constexpr void format_to_type(OutputIt out, const FormatArg& fmt, const char (&argument)[N])
+{
+    static_assert(N > 0);
+    std::copy(argument, argument + N - 1, out);
+}
+
+template<typename OutputIt, typename Arg>
+constexpr std::enable_if_t<std::is_floating_point_v<std::decay_t<Arg>>> format_to_type(OutputIt out, const FormatArg& fmt, Arg argument)
+{
+    char buffer[64];
+
+    std::chars_format cfmt;
+    switch (fmt.type) {
+    case FormatArg::Type::Hex:
+        cfmt = std::chars_format::hex;
+        break;
+    case FormatArg::Type::Scientific:
+        cfmt = std::chars_format::scientific;
+        break;
+    case FormatArg::Type::General:
+        cfmt = std::chars_format::general;
+        break;
+    default:
+        cfmt = std::chars_format::fixed;
+        break;
+    }
+
+    auto ret = floatconv::to_chars(buffer, buffer + sizeof(buffer), static_cast<double>(argument), cfmt, fmt.precision);
+    if (ret.ec == std::errc {}) {
+        std::copy(buffer, ret.ptr, out);
+    }
+}
+
+template<StringLiteral lit, size_t ArgIdx, size_t ArgCount, typename OutputIt, typename Formats>
+constexpr void copy_next(OutputIt out, const Formats& formats)
+{
+    if constexpr (ArgIdx + 1 >= ArgCount)
+        return;
+    std::copy(lit.value + formats[ArgIdx].end, lit.value + formats[ArgIdx + 1].begin, out);
+}
+
+template<StringLiteral lit, typename OutputIt, typename Formats, uint32_t... Is, typename... Args>
+constexpr void format_to_internal(OutputIt out, const Formats& formats, std::integer_sequence<uint32_t, Is...>, Args&&... args)
+{
+    ( (format_to_type(out, std::get<Is>(formats), args), copy_next<lit, Is, std::tuple_size_v<Formats>>(out, formats)), ...);
+}
+
 } // namespace detail
 
 template<detail::StringLiteral lit, typename OutputIt, typename... Args>
-void format_to(OutputIt out, Args&&... args)
+constexpr void format_to(OutputIt out, Args&&... args)
 {
     static_assert(detail::argumentCount<lit>() == sizeof...(Args));
-    auto fmtargs = detail::makeArgs<lit, sizeof...(Args)>();
-    auto pieces = detail::makePieces(fmtargs, std::forward<Args>(args)...);
-    for (const auto& foo : pieces) {
-        printf("hello %s\n", std::string(foo.view()).c_str());
+    if constexpr (sizeof...(Args) == 0) {
+        return;
+    } else {
+        auto argfmts = detail::parseArgs<lit, sizeof...(Args)>();
+        // auto argdatas = std::make_tuple(std::forward<Args>(args)...);
+        std::copy(lit.value, lit.value + argfmts[0].begin, out);
+        detail::format_to_internal<lit>(out, argfmts, std::make_integer_sequence<uint32_t, sizeof...(Args)>{}, std::forward<Args>(args)...);
+        std::copy(lit.value + argfmts[sizeof...(Args) - 1].end, lit.value + (lit.Size + 1), out);
     }
 }
 
 template<detail::StringLiteral lit, typename... Args>
-std::string format(Args&&... args)
+constexpr std::string format(Args&&... args)
 {
     std::string str;
     format_to<lit>(std::back_inserter(str), std::forward<Args>(args)...);
